@@ -20,6 +20,18 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Firebase Realtime Database
+
+The app uses Firebase Realtime Database for live menu, inventory, and order updates across devices. Create a Realtime Database in the same Firebase project, then add its URL to `.env.local`:
+
+```env
+NEXT_PUBLIC_FIREBASE_DATABASE_URL=https://<your-database-name>.firebasedatabase.app
+```
+
+Use the database URL shown in Firebase Console, since its domain can vary by region. Keep the existing Firebase environment variables as well, and configure Realtime Database security rules for your users; do not leave the database in test mode.
+
+The app initializes a default menu and inventory in Realtime Database when those records are missing. Existing Firestore data is not migrated or deleted.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

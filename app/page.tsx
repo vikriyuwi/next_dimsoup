@@ -15,6 +15,7 @@ import {
   Settings,
   Save,
   History,
+  Trash2,
 } from 'lucide-react';
 
 import { initializeApp, getApps, getApp, FirebaseOptions } from 'firebase/app';
@@ -26,13 +27,13 @@ import {
   type User,
 } from 'firebase/auth';
 import {
-  getFirestore,
-  doc,
-  collection,
-  onSnapshot,
-  addDoc,
+  getDatabase,
+  ref,
+  onValue,
+  push,
+  set,
   runTransaction,
-} from 'firebase/firestore';
+} from 'firebase/database';
 
 // ============================================================
 // Firebase configuration
@@ -45,6 +46,7 @@ const firebaseConfig: FirebaseOptions = {
   storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
   messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
+  databaseURL: process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL,
 };
 
 const hasValidFirebaseConfig = Boolean(
@@ -61,55 +63,36 @@ const app = hasValidFirebaseConfig
   : null;
 
 const auth = app ? getAuth(app) : null;
-const db = app ? getFirestore(app) : null;
+const database = app && firebaseConfig.databaseURL ? getDatabase(app) : null;
 
 const appId =
   typeof window !== 'undefined' && window.__app_id
     ? window.__app_id
     : 'demo-dimsum-app';
 
-function requireDb() {
-  if (!db) {
+function requireDatabase() {
+  if (!database) {
     throw new Error(
-      'Firebase is not configured. Please check your Firebase configuration.'
+      'Firebase Realtime Database is not configured. Set NEXT_PUBLIC_FIREBASE_DATABASE_URL.'
     );
   }
-  return db;
+  return database;
 }
 
-function getOrdersRef() {
-  return collection(
-    requireDb(),
-    'artifacts',
-    appId,
-    'public',
-    'data',
-    'orders'
-  );
+function getDataRef() {
+  return ref(requireDatabase(), `artifacts/${appId}/public/data`);
 }
 
 function getInventoryRef() {
-  return doc(
-    requireDb(),
-    'artifacts',
-    appId,
-    'public',
-    'data',
-    'inventory',
-    'main'
-  );
+  return ref(requireDatabase(), `artifacts/${appId}/public/data/inventory/main`);
 }
 
 function getMenuRef() {
-  return doc(
-    requireDb(),
-    'artifacts',
-    appId,
-    'public',
-    'data',
-    'menu',
-    'main'
-  );
+  return ref(requireDatabase(), `artifacts/${appId}/public/data/menu/main`);
+}
+
+function getOrdersRef() {
+  return ref(requireDatabase(), `artifacts/${appId}/public/data/orders`);
 }
 
 // ============================================================
@@ -286,6 +269,12 @@ function validateMenu(menu: MenuDefinition): void {
   }
 
   for (const combo of Object.values(menu.combos)) {
+    if (!combo.contains || Object.keys(combo.contains).length === 0) {
+      throw new Error(
+        `Combo "${combo.name}" needs at least one menu item.`
+      );
+    }
+
     for (const [baseId, quantity] of Object.entries(
       combo.contains || {}
     )) {
@@ -363,28 +352,31 @@ export default function DimsumApp() {
     return () => unsubscribe();
   }, []);
 
-  // Subscribe to shared Firestore data.
+  // Subscribe to shared Realtime Database data.
   useEffect(() => {
-    if (!user || !db) return;
+    if (!user || !database) return;
 
     let active = true;
 
-    const unsubOrders = onSnapshot(
+    const unsubOrders = onValue(
       getOrdersRef(),
       (snapshot) => {
-        const fetchedOrders: Order[] = snapshot.docs.map((orderDoc) => {
-          const data = orderDoc.data();
-          return {
-            id: orderDoc.id,
-            items: (data.items ?? {}) as Record<string, number>,
-            itemDetails: data.itemDetails as Record<string, OrderItemDetails> | undefined,
-            customerName: data.customerName as string | undefined,
+        const savedOrders = (snapshot.val() || {}) as Record<
+          string,
+          Omit<Order, 'id'>
+        >;
+        const fetchedOrders: Order[] = Object.entries(savedOrders).map(
+          ([id, data]) => ({
+            id,
+            items: data.items ?? {},
+            itemDetails: data.itemDetails,
+            customerName: data.customerName,
             totalPrice: Number(data.totalPrice ?? 0),
             status: String(data.status ?? 'pending'),
             timestamp: Number(data.timestamp ?? 0),
             servedAt: data.servedAt === undefined ? undefined : Number(data.servedAt),
-          };
-        });
+          })
+        );
 
         fetchedOrders.sort(
           (a, b) => (b.timestamp || 0) - (a.timestamp || 0)
@@ -403,29 +395,24 @@ export default function DimsumApp() {
       }
     );
 
-    const unsubInventory = onSnapshot(
+    const unsubInventory = onValue(
       getInventoryRef(),
-      async (snapshot) => {
+      (snapshot) => {
         if (snapshot.exists()) {
-          if (active) setInventory(snapshot.data() as InventoryState);
+          if (active) setInventory(snapshot.val() as InventoryState);
           return;
         }
 
-        try {
-          // Initialize once without overwriting an existing document.
-          await runTransaction(db, async (transaction) => {
-            const latest = await transaction.get(getInventoryRef());
-
-            if (!latest.exists()) {
-              transaction.set(
-                getInventoryRef(),
-                getDefaultInventory(DEFAULT_MENU.base)
-              );
-            }
-          });
-        } catch (error: unknown) {
+        void runTransaction(getInventoryRef(), (currentInventory) =>
+          currentInventory ?? getDefaultInventory(DEFAULT_MENU.base)
+        ).catch((error: unknown) => {
           console.error('Inventory initialization error:', error);
-        }
+          if (active) {
+            setDataError(
+              error instanceof Error ? error.message : 'Failed to initialize inventory.'
+            );
+          }
+        });
       },
       (error) => {
         console.error('Inventory sync error:', error);
@@ -433,11 +420,11 @@ export default function DimsumApp() {
       }
     );
 
-    const unsubMenu = onSnapshot(
+    const unsubMenu = onValue(
       getMenuRef(),
-      async (snapshot) => {
+      (snapshot) => {
         if (snapshot.exists()) {
-          const savedMenu = snapshot.data() as MenuDefinition;
+          const savedMenu = snapshot.val() as MenuDefinition;
 
           if (active) {
             try {
@@ -452,17 +439,16 @@ export default function DimsumApp() {
           return;
         }
 
-        try {
-          await runTransaction(db, async (transaction) => {
-            const latest = await transaction.get(getMenuRef());
-
-            if (!latest.exists()) {
-              transaction.set(getMenuRef(), DEFAULT_MENU);
-            }
-          });
-        } catch (error: unknown) {
+        void runTransaction(getMenuRef(), (currentMenu) =>
+          currentMenu ?? DEFAULT_MENU
+        ).catch((error: unknown) => {
           console.error('Menu initialization error:', error);
-        }
+          if (active) {
+            setDataError(
+              error instanceof Error ? error.message : 'Failed to initialize menu.'
+            );
+          }
+        });
       },
       (error) => {
         console.error('Menu sync error:', error);
@@ -477,6 +463,12 @@ export default function DimsumApp() {
       unsubMenu();
     };
   }, [user]);
+
+  const connectionError =
+    dataError ??
+    (user && !database
+      ? 'Firebase Realtime Database is not configured. Set NEXT_PUBLIC_FIREBASE_DATABASE_URL.'
+      : null);
 
   if (authLoading) {
     return (
@@ -503,9 +495,9 @@ export default function DimsumApp() {
 
   return (
     <div className="min-h-screen bg-[#faf8f5] font-sans text-slate-800 antialiased selection:bg-orange-100">
-      {dataError && (
+      {connectionError && (
         <div className="border-b border-red-200 bg-red-50 px-4 py-3 text-center text-sm text-red-700">
-          {dataError}
+          {connectionError}
         </div>
       )}
 
@@ -698,7 +690,12 @@ function CashierView({ setRole, menu }: CashierViewProps) {
         })
       );
 
-      await addDoc(getOrdersRef(), {
+      const orderRef = push(getOrdersRef());
+      if (!orderRef.key) {
+        throw new Error('Could not create an order ID.');
+      }
+
+      await set(orderRef, {
         items,
         itemDetails,
         customerName: customerName.trim() || 'Guest',
@@ -876,15 +873,12 @@ function CookerView({ setRole, orders, inventory, menu }: CookerViewProps) {
     setError('');
 
     try {
-      await runTransaction(requireDb(), async (transaction) => {
-        const inventoryRef = getInventoryRef();
-        const snapshot = await transaction.get(inventoryRef);
-
-        if (!snapshot.exists()) {
+      const result = await runTransaction(getInventoryRef(), (value) => {
+        if (!value) {
           throw new Error('Inventory has not been initialized.');
         }
 
-        const currentInventory = snapshot.data() as InventoryState;
+        const currentInventory = value as InventoryState;
         const currentItem = currentInventory[itemId] || {
           ready: 0,
           batches: [],
@@ -892,10 +886,15 @@ function CookerView({ setRole, orders, inventory, menu }: CookerViewProps) {
 
         const updatedItem = updater(currentItem);
 
-        transaction.update(inventoryRef, {
+        return {
+          ...currentInventory,
           [itemId]: updatedItem,
-        });
+        };
       });
+
+      if (!result.committed) {
+        throw new Error('Inventory update was not committed.');
+      }
     } catch (error: unknown) {
       console.error('Inventory update failed:', error);
       setError(error instanceof Error ? error.message : 'Failed to update inventory.');
@@ -913,16 +912,18 @@ function CookerView({ setRole, orders, inventory, menu }: CookerViewProps) {
       return;
     }
 
+    const batch = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      qty,
+      timestamp: Date.now(),
+    };
+
     try {
       await updateInventoryItem(itemId, (itemData) => ({
         ...itemData,
         batches: [
           ...(itemData.batches || []),
-          {
-            id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-            qty,
-            timestamp: Date.now(),
-          },
+          batch,
         ],
       }));
 
@@ -1187,7 +1188,7 @@ function ServerView({ setRole, orders, inventory, menu }: ServerViewProps) {
     (order) => order.status === 'pending'
   );
 
-  const serveOrder = async (order: Order): Promise<void> => {
+  const serveOrder = async (order: Order, servedAt: number): Promise<void> => {
     if (processingOrders[order.id]) return;
 
     setProcessingOrders((prev) => ({
@@ -1198,35 +1199,36 @@ function ServerView({ setRole, orders, inventory, menu }: ServerViewProps) {
     setError('');
 
     try {
-      await runTransaction(requireDb(), async (transaction) => {
-        const orderRef = doc(getOrdersRef(), order.id);
-        const inventoryRef = getInventoryRef();
+      const result = await runTransaction(getDataRef(), (value) => {
+        if (!value) {
+          throw new Error('Application data has not been initialized.');
+        }
 
-        const [orderSnapshot, inventorySnapshot] =
-          await Promise.all([
-            transaction.get(orderRef),
-            transaction.get(inventoryRef),
-          ]);
+        const data = value as {
+          orders?: Record<string, Omit<Order, 'id'>>;
+          inventory?: { main?: InventoryState; [key: string]: unknown };
+          [key: string]: unknown;
+        };
+        const orders = data.orders || {};
+        const latestOrder = orders[order.id];
 
-        if (!orderSnapshot.exists()) {
+        if (!latestOrder) {
           throw new Error('Order not found.');
         }
 
-        if (!inventorySnapshot.exists()) {
+        if (!data.inventory?.main) {
           throw new Error('Inventory has not been initialized.');
         }
-
-        const latestOrder = orderSnapshot.data();
 
         if (latestOrder.status !== 'pending') {
           throw new Error('This order has already been processed.');
         }
 
-        const latestInventory = inventorySnapshot.data() as InventoryState;
+        const latestInventory = data.inventory.main;
         const requiredBaseItems: Record<string, number> = {};
 
         Object.entries(
-          (latestOrder.items || {}) as Record<string, number>
+          latestOrder.items || {}
         ).forEach(([itemId, qty]) => {
           if (!Number.isInteger(qty) || qty <= 0) {
             throw new Error(`Invalid quantity for ${itemId}.`);
@@ -1292,13 +1294,26 @@ function ServerView({ setRole, orders, inventory, menu }: ServerViewProps) {
           };
         }
 
-        transaction.set(inventoryRef, updatedInventory);
-
-        transaction.update(orderRef, {
-          status: 'served',
-          servedAt: Date.now(),
-        });
+        return {
+          ...data,
+          inventory: {
+            ...data.inventory,
+            main: updatedInventory,
+          },
+          orders: {
+            ...orders,
+            [order.id]: {
+              ...latestOrder,
+              status: 'served',
+              servedAt,
+            },
+          },
+        };
       });
+
+      if (!result.committed) {
+        throw new Error('Order could not be processed. Please try again.');
+      }
     } catch (error: unknown) {
       console.error('Failed to serve order:', error);
       setError(error instanceof Error ? error.message : 'Failed to serve order.');
@@ -1335,7 +1350,7 @@ function ServerView({ setRole, orders, inventory, menu }: ServerViewProps) {
                 key={order.id}
                 order={order}
                 number={pendingOrders.length - index}
-                onServe={() => serveOrder(order)}
+                onServe={() => serveOrder(order, Date.now())}
                 processing={Boolean(processingOrders[order.id])}
                 menu={menu}
               />
@@ -1477,6 +1492,143 @@ function ManagerView({ setRole, menu }: ManagerViewProps) {
     }));
   };
 
+  const addBaseItem = (): void => {
+    const id = `base-${crypto.randomUUID()}`;
+    setLocalMenu((prev) => ({
+      ...prev,
+      base: {
+        ...prev.base,
+        [id]: {
+          id,
+          name: 'New Menu Item',
+          price: 0,
+          color: 'bg-slate-100 text-slate-800',
+        },
+      },
+    }));
+  };
+
+  const removeBaseItem = (id: string): void => {
+    if (
+      !window.confirm(
+        'Remove this menu item? It will also be removed from all combos. Existing orders containing it may no longer be prepared.'
+      )
+    ) {
+      return;
+    }
+
+    setLocalMenu((prev) => {
+      const base = { ...prev.base };
+      delete base[id];
+
+      const combos = Object.fromEntries(
+        Object.entries(prev.combos).map(([comboId, combo]) => {
+          const contains = { ...(combo.contains || {}) };
+          delete contains[id];
+
+          return [comboId, { ...combo, contains }];
+        })
+      );
+
+      return { ...prev, base, combos };
+    });
+  };
+
+  const addCombo = (): void => {
+    const id = `combo-${crypto.randomUUID()}`;
+    setLocalMenu((prev) => ({
+      ...prev,
+      combos: {
+        ...prev.combos,
+        [id]: {
+          id,
+          name: 'New Combo',
+          price: 0,
+          desc: '',
+          color: 'bg-slate-100 text-slate-800',
+          contains: {},
+        },
+      },
+    }));
+  };
+
+  const removeCombo = (id: string): void => {
+    if (
+      !window.confirm(
+        'Remove this combo? Existing orders containing it may no longer be prepared.'
+      )
+    ) {
+      return;
+    }
+
+    setLocalMenu((prev) => {
+      const combos = { ...prev.combos };
+      delete combos[id];
+      return { ...prev, combos };
+    });
+  };
+
+  const addComboIngredient = (comboId: string, baseId: string): void => {
+    setLocalMenu((prev) => {
+      const combo = prev.combos[comboId];
+      if (!combo || combo.contains?.[baseId]) return prev;
+
+      return {
+        ...prev,
+        combos: {
+          ...prev.combos,
+          [comboId]: {
+            ...combo,
+            contains: { ...(combo.contains || {}), [baseId]: 1 },
+          },
+        },
+      };
+    });
+  };
+
+  const updateComboIngredientQuantity = (
+    comboId: string,
+    baseId: string,
+    quantity: number
+  ): void => {
+    setLocalMenu((prev) => {
+      const combo = prev.combos[comboId];
+      if (!combo) return prev;
+
+      return {
+        ...prev,
+        combos: {
+          ...prev.combos,
+          [comboId]: {
+            ...combo,
+            contains: {
+              ...(combo.contains || {}),
+              [baseId]: quantity,
+            },
+          },
+        },
+      };
+    });
+  };
+
+  const removeComboIngredient = (comboId: string, baseId: string): void => {
+    setLocalMenu((prev) => {
+      const combo = prev.combos[comboId];
+      if (!combo) return prev;
+
+      const contains = { ...(combo.contains || {}) };
+      delete contains[baseId];
+
+      return {
+        ...prev,
+        combos: {
+          ...prev.combos,
+          [comboId]: { ...combo, contains },
+        },
+      };
+    });
+  };
+
   const handleSave = async () => {
     if (saving) return;
 
@@ -1510,18 +1662,7 @@ function ManagerView({ setRole, menu }: ManagerViewProps) {
         ),
       };
 
-      await runTransaction(requireDb(), async (transaction) => {
-        const menuRef = getMenuRef();
-        const snapshot = await transaction.get(menuRef);
-
-        if (!snapshot.exists()) {
-          throw new Error(
-            'Menu has not been initialized. Please try again.'
-          );
-        }
-
-        transaction.set(menuRef, normalizedMenu);
-      });
+      await set(getMenuRef(), normalizedMenu);
 
       setLocalMenu(normalizedMenu);
       setMessageType('success');
@@ -1552,16 +1693,27 @@ function ManagerView({ setRole, menu }: ManagerViewProps) {
         )}
 
         <section className="space-y-4">
-          <h2 className="text-xl font-bold text-slate-800 border-b pb-2">
-            A La Carte Items
-          </h2>
+          <div className="flex items-center justify-between gap-3 border-b pb-2">
+            <h2 className="text-xl font-bold text-slate-800">
+              A La Carte Items
+            </h2>
+            <button
+              type="button"
+              onClick={addBaseItem}
+              disabled={saving}
+              className="flex shrink-0 items-center gap-2 rounded-xl bg-orange-500 px-3 py-2 text-sm font-bold text-white transition hover:bg-orange-600 disabled:opacity-50"
+            >
+              <Plus size={16} />
+              Add item
+            </button>
+          </div>
 
           {Object.values(localMenu.base || {}).map((item) => (
             <div
               key={item.id}
               className="space-y-4 rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm transition hover:shadow-md sm:p-6"
             >
-              <div className="flex gap-4">
+              <div className="flex items-start gap-4">
                 <div className="flex-1 min-w-0">
                   <label className="block text-xs font-bold text-slate-500 uppercase">
                     Name
@@ -1582,7 +1734,7 @@ function ManagerView({ setRole, menu }: ManagerViewProps) {
                   />
                 </div>
 
-                <div className="w-1/3">
+                <div className="w-1/3 shrink-0">
                   <label className="block text-xs font-bold text-slate-500 uppercase">
                     Price (Rp)
                   </label>
@@ -1604,22 +1756,41 @@ function ManagerView({ setRole, menu }: ManagerViewProps) {
                     className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-orange-400 focus:bg-white focus:ring-4 focus:ring-orange-100"
                   />
                 </div>
+
+                <button
+                  type="button"
+                  onClick={() => removeBaseItem(item.id)}
+                  disabled={saving}
+                  aria-label={`Remove ${item.name}`}
+                  className="mt-5 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-red-200 text-red-600 transition hover:bg-red-50 disabled:opacity-50"
+                >
+                  <Trash2 size={18} />
+                </button>
               </div>
             </div>
           ))}
         </section>
 
         <section className="space-y-4">
-          <h2 className="text-xl font-bold text-slate-800 border-b pb-2">
-            Combos
-          </h2>
+          <div className="flex items-center justify-between gap-3 border-b pb-2">
+            <h2 className="text-xl font-bold text-slate-800">Combos</h2>
+            <button
+              type="button"
+              onClick={addCombo}
+              disabled={saving}
+              className="flex shrink-0 items-center gap-2 rounded-xl bg-orange-500 px-3 py-2 text-sm font-bold text-white transition hover:bg-orange-600 disabled:opacity-50"
+            >
+              <Plus size={16} />
+              Add combo
+            </button>
+          </div>
 
           {Object.values(localMenu.combos || {}).map((combo) => (
             <div
               key={combo.id}
               className="space-y-4 rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm transition hover:shadow-md sm:p-6"
             >
-              <div className="flex gap-4">
+              <div className="flex items-start gap-4">
                 <div className="flex-1 min-w-0">
                   <label className="block text-xs font-bold text-slate-500 uppercase">
                     Combo Name
@@ -1640,7 +1811,7 @@ function ManagerView({ setRole, menu }: ManagerViewProps) {
                   />
                 </div>
 
-                <div className="w-1/3">
+                <div className="w-1/3 shrink-0">
                   <label className="block text-xs font-bold text-slate-500 uppercase">
                     Price (Rp)
                   </label>
@@ -1662,6 +1833,16 @@ function ManagerView({ setRole, menu }: ManagerViewProps) {
                     className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-orange-400 focus:bg-white focus:ring-4 focus:ring-orange-100"
                   />
                 </div>
+
+                <button
+                  type="button"
+                  onClick={() => removeCombo(combo.id)}
+                  disabled={saving}
+                  aria-label={`Remove ${combo.name}`}
+                  className="mt-5 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-red-200 text-red-600 transition hover:bg-red-50 disabled:opacity-50"
+                >
+                  <Trash2 size={18} />
+                </button>
               </div>
 
               <div>
@@ -1684,14 +1865,73 @@ function ManagerView({ setRole, menu }: ManagerViewProps) {
                 />
               </div>
 
-              <div className="text-sm text-slate-500">
-                Contains:{' '}
-                {Object.entries(combo.contains || {})
-                  .map(
-                    ([id, qty]) =>
-                      `${qty} × ${getMenuItemName(localMenu, id)}`
-                  )
-                  .join(', ')}
+              <div className="space-y-3">
+                <label className="block text-xs font-bold text-slate-500 uppercase">
+                  Combo Items
+                </label>
+
+                {Object.entries(combo.contains || {}).map(([baseId, qty]) => (
+                  <div
+                    key={baseId}
+                    className="flex items-center gap-3 rounded-xl bg-slate-50 p-3"
+                  >
+                    <span className="min-w-0 flex-1 text-sm font-medium text-slate-700">
+                      {getMenuItemName(localMenu, baseId)}
+                    </span>
+                    <label className="flex items-center gap-2 text-xs font-bold text-slate-500">
+                      Qty
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={qty}
+                        aria-label={`${getMenuItemName(localMenu, baseId)} quantity in ${combo.name}`}
+                        onChange={(e) =>
+                          updateComboIngredientQuantity(
+                            combo.id,
+                            baseId,
+                            e.target.value === '' ? 0 : Number(e.target.value)
+                          )
+                        }
+                        className="w-20 rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm text-slate-800 outline-none focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => removeComboIngredient(combo.id, baseId)}
+                      disabled={saving}
+                      aria-label={`Remove ${getMenuItemName(localMenu, baseId)} from ${combo.name}`}
+                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-red-200 text-red-600 transition hover:bg-red-50 disabled:opacity-50"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                ))}
+
+                <select
+                  value=""
+                  disabled={saving || Object.keys(combo.contains || {}).length >= Object.keys(localMenu.base).length}
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      addComboIngredient(combo.id, e.target.value);
+                    }
+                  }}
+                  aria-label={`Add item to ${combo.name}`}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700 outline-none focus:border-orange-400 focus:bg-white focus:ring-4 focus:ring-orange-100 disabled:opacity-50"
+                >
+                  <option value="">
+                    {Object.keys(combo.contains || {}).length >= Object.keys(localMenu.base).length
+                      ? 'All menu items are in this combo'
+                      : 'Add a menu item to this combo'}
+                  </option>
+                  {Object.values(localMenu.base)
+                    .filter((item) => !combo.contains?.[item.id])
+                    .map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.name}
+                      </option>
+                    ))}
+                </select>
               </div>
             </div>
           ))}
