@@ -1,0 +1,325 @@
+
+/* =========================================================
+   Dimsum Hub — UI/UX enhancement
+   Presentation only. No business logic changes.
+   ========================================================= */
+
+.dimsum-app {
+  --ds-primary: #ea580c;
+  --ds-primary-hover: #c2410c;
+  --ds-ink: #1e293b;
+  --ds-muted: #64748b;
+  --ds-border: #e8eaf0;
+  --ds-surface: #ffffff;
+  --ds-background: #f6f7fb;
+  --ds-radius: 20px;
+
+  min-height: 100vh;
+  color: var(--ds-ink);
+  background: var(--ds-background);
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.dimsum-app button {
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease,
+    opacity 160ms ease;
+}
+
+.dimsum-app button:focus-visible,
+.dimsum-app input:focus-visible {
+  outline: 3px solid rgb(234 88 12 / 30%);
+  outline-offset: 3px;
+}
+
+.dimsum-app button:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.dimsum-app button:disabled {
+  cursor: not-allowed;
+}
+
+/* Main application background */
+
+.dimsum-app main {
+  padding-top: 24px;
+  padding-bottom: 32px;
+}
+
+/* Headers */
+
+.dimsum-app header {
+  min-height: 68px;
+  padding: 16px 24px;
+  background: rgb(255 255 255 / 94%);
+  border-bottom: 1px solid var(--ds-border);
+  box-shadow: 0 2px 12px rgb(15 23 42 / 4%);
+  backdrop-filter: blur(14px);
+}
+
+.dimsum-app header h1 {
+  font-size: 19px;
+  font-weight: 800;
+  letter-spacing: -0.035em;
+}
+
+.dimsum-app header button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--ds-border);
+  border-radius: 14px;
+  background: white;
+}
+
+.dimsum-app header button:hover {
+  color: var(--ds-primary);
+  background: #fff7ed;
+  border-color: #fed7aa;
+}
+
+/* Station selection */
+
+.dimsum-app h1,
+.dimsum-app h2,
+.dimsum-app h3 {
+  letter-spacing: -0.025em;
+}
+
+.dimsum-app button:has(> div > svg) {
+  touch-action: manipulation;
+}
+
+.dimsum-app .grid > button {
+  min-height: 190px;
+  border: 1px solid rgb(255 255 255 / 22%);
+  border-radius: 24px;
+  box-shadow: 0 8px 24px rgb(15 23 42 / 9%);
+}
+
+.dimsum-app .grid > button:hover {
+  box-shadow: 0 16px 32px rgb(15 23 42 / 15%);
+  transform: translateY(-3px);
+}
+
+.dimsum-app .grid > button > div {
+  width: 76px;
+  height: 76px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.dimsum-app .grid > button h2 {
+  font-size: 23px;
+  font-weight: 800;
+}
+
+.dimsum-app .grid > button p {
+  text-align: center;
+  line-height: 1.5;
+}
+
+/* Cards and sections */
+
+.dimsum-app main section > div.bg-white,
+.dimsum-app main > div > div.bg-white,
+.dimsum-app main > div > div > div.bg-white {
+  box-shadow: 0 3px 12px rgb(15 23 42 / 3%);
+}
+
+.dimsum-app main section {
+  min-width: 0;
+}
+
+.dimsum-app main section h2 {
+  letter-spacing: 0.04em;
+}
+
+/* Form controls */
+
+.dimsum-app input {
+  min-height: 44px;
+  color: var(--ds-ink);
+  border-color: #dfe3eb;
+  border-radius: 12px;
+  background: white;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.dimsum-app input:hover:not(:disabled) {
+  border-color: #cbd5e1;
+}
+
+.dimsum-app input:focus {
+  border-color: var(--ds-primary);
+  box-shadow: 0 0 0 3px rgb(234 88 12 / 10%);
+}
+
+/* Menu item cards */
+
+.dimsum-app main .rounded-xl.border,
+.dimsum-app main .rounded-2xl.border {
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.dimsum-app main .rounded-xl.border:hover,
+.dimsum-app main .rounded-2xl.border:hover {
+  border-color: #e2e8f0;
+  box-shadow: 0 6px 18px rgb(15 23 42 / 5%);
+}
+
+/* Primary actions */
+
+.dimsum-app button.bg-orange-500,
+.dimsum-app button.bg-orange-600,
+.dimsum-app button.bg-purple-600,
+.dimsum-app button.bg-blue-500,
+.dimsum-app button.bg-emerald-500 {
+  font-weight: 750;
+  box-shadow: 0 3px 8px rgb(15 23 42 / 8%);
+}
+
+.dimsum-app button.bg-orange-500:hover:not(:disabled) {
+  background-color: var(--ds-primary-hover);
+}
+
+.dimsum-app button.bg-purple-600:hover:not(:disabled) {
+  background-color: #6d28d9;
+}
+
+.dimsum-app button.bg-blue-500:hover:not(:disabled) {
+  background-color: #2563eb;
+}
+
+.dimsum-app button.bg-emerald-500:hover:not(:disabled) {
+  background-color: #059669;
+}
+
+/* Fixed checkout and save bars */
+
+.dimsum-app .fixed.bottom-0 {
+  padding: 16px 20px;
+  background: rgb(255 255 255 / 97%);
+  border-top: 1px solid var(--ds-border);
+  box-shadow: 0 -6px 24px rgb(15 23 42 / 5%);
+  backdrop-filter: blur(16px);
+}
+
+.dimsum-app .fixed.bottom-0 button {
+  min-height: 48px;
+}
+
+/* Kitchen dashboard */
+
+.dimsum-app main .rounded-\[24px\] {
+  border-radius: 24px;
+  box-shadow: 0 5px 20px rgb(15 23 42 / 4%);
+}
+
+.dimsum-app main .rounded-\[20px\] {
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    transform 160ms ease;
+}
+
+.dimsum-app main .rounded-\[20px\]:hover:not(:disabled) {
+  border-color: #fed7aa;
+}
+
+.dimsum-app main .text-6xl {
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.dimsum-app main .text-3xl,
+.dimsum-app main .text-4xl,
+.dimsum-app main .text-5xl {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Order tickets */
+
+.dimsum-app main .space-y-4 > .bg-white.rounded-2xl,
+.dimsum-app main .space-y-4 > .bg-white.rounded-xl {
+  border-color: var(--ds-border);
+  border-radius: 20px;
+  box-shadow: 0 4px 16px rgb(15 23 42 / 4%);
+}
+
+.dimsum-app main .space-y-4 > .bg-white.rounded-2xl:hover,
+.dimsum-app main .space-y-4 > .bg-white.rounded-xl:hover {
+  box-shadow: 0 8px 24px rgb(15 23 42 / 7%);
+}
+
+.dimsum-app .uppercase.tracking-wider {
+  letter-spacing: 0.07em;
+}
+
+/* Error and feedback messages */
+
+.dimsum-app .bg-red-50.text-red-700,
+.dimsum-app .bg-red-100.text-red-700 {
+  border: 1px solid #fecaca;
+  border-radius: 14px;
+  line-height: 1.6;
+}
+
+.dimsum-app .bg-emerald-100.text-emerald-800 {
+  border: 1px solid #a7f3d0;
+  border-radius: 14px;
+}
+
+/* Mobile and small tablets */
+
+@media (max-width: 640px) {
+  .dimsum-app header {
+    padding: 12px 16px;
+  }
+
+  .dimsum-app header h1 {
+    font-size: 17px;
+  }
+
+  .dimsum-app main {
+    padding-top: 16px;
+  }
+
+  .dimsum-app .grid > button {
+    min-height: 150px;
+    padding: 24px;
+  }
+
+  .dimsum-app .fixed.bottom-0 {
+    padding: 12px 16px;
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
+  }
+
+  .dimsum-app main .text-6xl {
+    font-size: 3.25rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dimsum-app *,
+  .dimsum-app *::before,
+  .dimsum-app *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
